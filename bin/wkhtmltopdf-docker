@@ -1,0 +1,35 @@
+#!/bin/bash
+set -euo pipefail
+
+TAG="$(basename "$(find "$(dirname "$0")" -name 'wkhtmltopdf-*-amd64')" | sed 's/-/-binary:/')"
+
+if [ -z "$(docker images -q "$TAG" 2> /dev/null)" ]; then
+  docker build --quiet --tag "$TAG" "$(dirname "$0")/.." > /dev/null
+fi
+
+WORK_DIR="$(mktemp -d "/tmp/wkhtmltopdf-docker.XXXXXX")"
+trap '{ rm -rf "$WORK_DIR"; }' EXIT
+
+args=("$@")
+stdin=false
+
+for (( i = 0; i < ${#args[@]}; i++ )); do
+  case "${args[i]}" in
+    --header-html|--footer-html)
+      TEMPFILE="$WORK_DIR/$(echo "${args[i]}" | sed -e 's/^--//' -e 's/-/./')"
+      cp "${args[i+1]}" "$TEMPFILE"
+      args[i+1]="$TEMPFILE"
+      ;;
+    -)
+      stdin=true
+      ;;
+  esac
+done
+
+if [[ "$stdin" == true ]]; then
+  cat
+else
+  cat < /dev/null
+fi | sed 's#//127.0.0.1#//host.docker.internal#g' > "$WORK_DIR/stdin.html"
+
+docker run --rm -i -v "$WORK_DIR:$WORK_DIR" -v "$PWD/app/assets:$PWD/app/assets" "$TAG" "${args[@]}" < "$WORK_DIR/stdin.html"
